@@ -7,6 +7,7 @@ A collection of open-source [Claude Code skills](https://docs.claude.com/en/docs
 | Skill | What it does |
 |-------|--------------|
 | [`geo-prompt-library-v2`](./geo-prompt-library-v2) | Build a Generative Engine Optimization (GEO) prompt-tracking library for a brand — segmented natural-language prompts, validated against SEO keyword data via DataForSEO. |
+| [`aeo-content-structure-optimizer`](./aeo-content-structure-optimizer) | Audit and rewrite an existing page so ChatGPT and other AI answer engines are more likely to cite it — Key Takeaways, entity density, verified statistics, question headings, tables, chunk structure and freshness, each tied to a published citation study. Delivers a Google Doc with before/after metrics and the full revised article. |
 
 ## Installing a skill
 
