@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure a markdown page against the ChatGPT-citation evidence base.
 
-Usage: python3 analyze.py page.md [--html page.html] [--today YYYY-MM-DD]
+Usage: python3 analyze.py page.md [--html page.html] [--today YYYY-MM-DD] [--lang auto|en|fr]
 
 --html: raw HTML of the live page. Enables real <table> counting and
         publish/modified date extraction (JSON-LD, meta tags, <time>).
@@ -9,6 +9,11 @@ Usage: python3 analyze.py page.md [--html page.html] [--today YYYY-MM-DD]
 Stdlib only. If TextBlob is installed, subjectivity is measured too; otherwise
 it is reported as null and should be judged qualitatively.
 Factor IDs match references/evidence.md.
+
+--lang: rule set for language-dependent checks (default auto: <html lang>, then
+        the share of French and English function words). French rules are a local
+        addition to the Nectiv original; English behaviour is unchanged. The study
+        benchmarks come from English content, so compare French pages directionally.
 """
 import argparse
 import datetime as dt
@@ -93,6 +98,102 @@ STOP = set(
 NON_ENTITY_CAPS = set("""I I'm I've It's The A An This That These Those""".split())
 
 
+# --- French rules. use_language("fr") swaps them in for the English ones above.
+LANG = "en"
+WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'&.+-]*")
+SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+ELISION_RE = re.compile(r"\b(?:l|d|j|n|s|t|m|c|qu|jusqu|lorsqu|puisqu|quoiqu)['’](?=\w)", re.I)
+EN_RULES = {}
+FR_RULES = {
+    "DEFINITIVE_RE": re.compile(
+        r"(?<![nN]['’])\b(?:est|sont) (?:un|une|le|la|l['’]|les|des|définie?s? comme|appelée?s?|connue?s? comme)"
+        r"|\b(?:se définit|désigne(?:nt)?|correspond(?:ent)? à|signifie(?:nt)?|consiste(?:nt)? (?:à|en)|"
+        r"regroupe(?:nt)?|on appelle)\b"
+        # Subject-first "X est/sont Y" in the opening words, without a bare pronoun as subject.
+        r"|^(?!(?:il|elle|ils|elles|ce|cela|ceci|ça|on|c['’])\b)(?:[\w'’()\-]+\s){1,6}(?:est|sont)\s(?!pas\b)",
+        re.I),
+    "FLUFF_RE": re.compile(
+        r"(de nos jours|à l['’]heure (?:actuelle|où)|dans le monde d['’]aujourd['’]hui|dans un monde|"
+        r"en (?:constante|perpétuelle) évolution|dans (?:cet article|ce guide|ce billet)|"
+        r"nous allons (?:voir|aborder|explorer|découvrir)|sans plus attendre|ne cherchez plus|"
+        r"(?:lorsqu['’]|quand )il s['’]agit de|dans le monde de|n['’]est un secret pour personne|"
+        r"vous vous êtes (?:déjà )?demandé|il va sans dire|vous l['’]aurez compris)", re.I),
+    "SUMMARY_HEAD_RE": re.compile(
+        r"(résumé|conclusion|pour conclure|points? clés?|l['’]essentiel|à retenir|en bref|synthèse|bilan)", re.I),
+    "GENERIC_REF_RE": re.compile(
+        r"\b((?:de nombreux|de nombreuses|plusieurs|certains|certaines|divers|diverses|différents|différentes|"
+        r"beaucoup de|la plupart des|les principaux|les principales|d['’]autres) "
+        r"(?:outils|plateformes|entreprises|sociétés|marques|fournisseurs|prestataires|solutions|applications|"
+        r"experts|spécialistes|études|sources|sites|éditeurs|acteurs|professionnels|réseaux|bases de données)|"
+        r"(?:études|recherches|données|experts|rapports|chiffres) (?:montrent|indiquent|suggèrent|disent|révèlent|confirment)|"
+        r"(?:selon|d['’]après) (?:les|des|une|un|certains) (?:études?|experts?|rapports?|spécialistes?)|"
+        r"(?:le|la|l['’]) ?(?:outil|plateforme|prestataire|fournisseur|solution|logiciel|service|étude|rapport)\b"
+        r"(?! (?:appelée?|nommée?))|"
+        r"(?:outils|bases de données|prestataires|services|fournisseurs) (?:tiers|tierces|externes)|"
+        r"(?:données|études?) (?:du secteur|sectorielles?))", re.I),
+    "HEDGE_RE": re.compile(
+        r"\b(peut|peuvent|pourrait|pourraient|pourra|pourront|souvent|généralement|habituellement|en général|"
+        r"typiquement|tend à|tendent à|potentiellement|éventuellement|possiblement|il est possible|"
+        r"dans certains cas|parfois|relativement|plutôt|en quelque sorte|dans une certaine mesure|"
+        r"sans doute|semble|semblent|probablement)\b", re.I),
+    "VAGUE_RE": re.compile(
+        r"\b(plusieurs|divers|diverses|différents|différentes|nombreux|nombreuses|beaucoup|certains|certaines|"
+        r"quelques|un certain nombre|une variété de|une gamme de|tous types|choses?|aspects?|nuances?|"
+        r"facteurs?|éléments?)\b", re.I),
+    "INDIRECT_OPENER_RE": re.compile(
+        r"^(il y a|il existe|il s['’]agit|il est|c['’]est|ce sont|ceci est|cela est|"
+        r"(?:lorsqu['’]|quand )il s['’]agit|en termes de|en matière de|au niveau de|l['’]une? des)", re.I),
+    "ABSTRACT_VERB_RE": re.compile(
+        r"\b(réside(?:nt)? dans|joue(?:nt)? un rôle(?: (?:clé|essentiel|crucial|majeur|central|important|déterminant))?|"
+        r"(?:est|sont|constitue(?:nt)?) (?:un|une|des) (?:élément|composante|facteur|levier|enjeu)s?(?: (?:clé|essentiel|essentielle|crucial|cruciale|majeur|majeure))?|"
+        r"sert de|servent de|découle(?:nt)? de|s['’]inscrit dans|s['’]inscrivent dans|permet(?:tent)? de)\b", re.I),
+    "STOP": set(
+        """le la les un une des du de et ou mais si au aux en dans sur pour par avec sans sous vers chez
+        que qui quoi dont quand comment pourquoi quel quelle quels quelles est sont être été ce cet cette
+        ces il elle ils elles nous vous votre vos notre nos leur leurs son sa ses ne pas plus""".split()),
+    "NON_ENTITY_CAPS": set(
+        """Le La Les Un Une Des Du De Et Ou Mais Si Au Aux En Dans Sur Pour Par Avec Sans Sous Vers Chez
+        À Que Qui Quand Comment Pourquoi Quel Quelle Quels Quelles Ce Cet Cette Ces Il Elle Ils Elles
+        On Nous Vous Votre Vos Notre Nos Leur Leurs Son Sa Ses Tout Tous Toute Toutes""".split()),
+    "PRONOUN_LEAD_RE": re.compile(
+        r"^(?:C['’]|(?:Il|Elle|Ils|Elles|Ce|Cet|Cette|Ces|Cela|Ceci|Ça|Son|Sa|Ses|Leur|Leurs|On|Voici|Celui|Celle|Ceux|Celles)(?!\w))"),
+    "TAKEAWAY_HEAD_RE": re.compile(
+        r"(points? clés?|l['’]essentiel|à retenir|en bref|en résumé|résumé|synthèse|réponse rapide)", re.I),
+    "KEY_TAKEAWAY_NAME_RE": re.compile(r"points? clés?|l['’]essentiel|à retenir", re.I),
+    "VISIBLE_UPDATED_RE": re.compile(
+        r"(dernière mise à jour|mise à jour|mis à jour|actualisée?|modifiée?|révisée?)(?: le)?\s*:?\s*"
+        r"((?:1er|\d{1,2})\s+[a-zéû]+\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|[a-zéû]+\s+\d{4})",
+        re.I),
+    "WORD_RE": re.compile(r"[^\W_][\w'’&.+-]*"),
+    "SENT_SPLIT_RE": re.compile(r"(?<=[.!?…])\s+(?=[A-ZÀ-ÖØ-Þ0-9\"'«“(])"),
+}
+FR_MONTHS = {m: i + 1 for i, m in enumerate(
+    "janvier février mars avril mai juin juillet août septembre octobre novembre décembre".split())}
+FR_MARKERS = set("le la les des du une et est sont pour dans avec vos votre nous vous sur que qui".split())
+EN_MARKERS = set("the and is are for with your you we our that this of to in on".split())
+
+
+def detect_language(md, html=None):
+    if html:
+        m = re.search(r"<html[^>]*\blang=[\"']?([a-zA-Z]{2})", html)
+        if m:
+            return "fr" if m.group(1).lower() == "fr" else "en"
+    toks = re.findall(r"[^\W\d_]+", md.lower())
+    fr = sum(t in FR_MARKERS for t in toks)
+    en = sum(t in EN_MARKERS for t in toks)
+    return "fr" if fr > en else "en"
+
+
+def use_language(lang):
+    """Rebind the language-dependent module rules. English is the untouched default."""
+    global LANG
+    g = globals()
+    if not EN_RULES:
+        EN_RULES.update({k: g[k] for k in FR_RULES})
+    g.update(FR_RULES if lang == "fr" else EN_RULES)
+    LANG = lang
+
+
 def strip_md(text):
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)
@@ -102,12 +203,15 @@ def strip_md(text):
 
 
 def sentences(text):
-    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", text.strip())
+    parts = SENT_SPLIT_RE.split(text.strip())
     return [p.strip() for p in parts if len(p.split()) >= 3]
 
 
 def words(text):
-    return re.findall(r"[A-Za-z0-9][A-Za-z0-9'&.+-]*", text)
+    if LANG == "fr":
+        text = ELISION_RE.sub("", text)  # "d'Orléans" -> "Orléans", one word and an entity
+        return [t.rstrip(".") for t in WORD_RE.findall(text)]
+    return WORD_RE.findall(text)
 
 
 def syllables(word):
@@ -119,7 +223,28 @@ def syllables(word):
     return max(1, len(re.findall(r"[aeiouy]{1,2}", w)))
 
 
+def syllables_fr(word):
+    """Rough French count: vowel groups, ignoring a final mute e/es."""
+    w = re.sub(r"[^\w]", "", word.lower())
+    n = len(re.findall(r"[aeiouyàâäéèêëîïôöùûüÿœæ]+", w))
+    if n > 1 and re.search(r"[^aeiouyàâäéèêëîïôöùûüÿœæ]es?$", w):
+        n -= 1
+    return max(1, n)
+
+
+def kandel_moles(sents):
+    """French Flesch adaptation (Kandel & Moles, 1958): higher is easier. Heuristic
+    syllable count; not comparable with the Flesch-Kincaid grade in the studies."""
+    ws = [w for s in sents for w in words(s)]
+    if not sents or not ws:
+        return None
+    syl = sum(syllables_fr(w) for w in ws)
+    return round(207 - 1.015 * len(ws) / len(sents) - 73.6 * syl / len(ws), 1)
+
+
 def fk_grade(sents):
+    if LANG == "fr":
+        return None  # English formula: meaningless on French text
     ws = [w for s in sents for w in words(s)]
     if not sents or not ws:
         return None
@@ -137,6 +262,8 @@ def entity_tokens(sent):
             continue
         if re.fullmatch(r"[A-Z]{2,}[0-9]*s?", t) or re.search(r"[a-z][A-Z]", t):
             ents.append(t)  # acronyms, CamelCase (HubSpot)
+        elif LANG == "fr" and i == 0 and re.search(r"-[A-ZÀ-ÖØ-Þ]", t):
+            ents.append(t)  # sentence-initial compound names (Saint-Étienne, Aix-en-Provence)
         elif i > 0 and t[0].isupper():
             ents.append(t)
         elif re.fullmatch(r"(19|20)\d\d", t):
@@ -147,6 +274,8 @@ def entity_tokens(sent):
 
 
 def subjectivity(text):
+    if LANG == "fr":
+        return None  # TextBlob's default lexicon is English
     try:
         from textblob import TextBlob  # optional
     except ImportError:
@@ -205,6 +334,17 @@ def parse_date(raw):
     m = re.match(r"(\d{4}-\d{2}-\d{2})", raw)
     if m:
         return dt.date.fromisoformat(m.group(1))
+    if LANG == "fr":
+        try:
+            m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", raw)  # day first
+            if m:
+                return dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            m = re.fullmatch(r"(?:(1er|\d{1,2})\s+)?([a-zéû]+)\s+(\d{4})", raw.lower())
+            if m and m.group(2) in FR_MONTHS:
+                return dt.date(int(m.group(3)), FR_MONTHS[m.group(2)], int((m.group(1) or "1").replace("er", "")))
+        except ValueError:
+            pass
+        return None
     for fmt in ("%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b. %d, %Y", "%m/%d/%Y", "%B %Y"):
         try:
             return dt.datetime.strptime(raw, fmt).date()
@@ -267,7 +407,9 @@ def parse_blocks(md):
 
 
 def content_words(text):
-    return {w.lower() for w in words(text) if w.lower() not in STOP and len(w) > 2}
+    out = {w.lower() for w in words(text) if w.lower() not in STOP and len(w) > 2}
+    # French echo check: "déchet" under a heading about "déchets" is still an echo.
+    return {w.rstrip("sx.") for w in out} if LANG == "fr" else out
 
 
 LIST_LINE_RE = re.compile(r"^\s*([-*+]|\d+[.)])\s+\S")
@@ -276,6 +418,7 @@ PRONOUN_LEAD_RE = re.compile(r"^(It|This|That|These|Those|They|Its|Their|He|She|
 
 TAKEAWAY_HEAD_RE = re.compile(
     r"(key takeaways?|takeaways|tl;?dr|key points|at a glance|in brief|summary|quick answer)", re.I)
+KEY_TAKEAWAY_NAME_RE = re.compile(r"takeaway", re.I)
 
 
 def key_takeaways(md):
@@ -304,7 +447,7 @@ def key_takeaways(md):
                 prose += 1
         found.append({"heading": strip_md(m.group(2)).strip(), "position_pct": round(100 * before / total, 1),
                       "bullets": bullets, "prose_lines": prose, "is_first": is_first,
-                      "is_key_takeaways": bool(re.search(r"takeaway", m.group(2), re.I))})
+                      "is_key_takeaways": bool(KEY_TAKEAWAY_NAME_RE.search(m.group(2)))})
     best = next((f for f in found if f["is_key_takeaways"]), found[0] if found else None)
     passes = bool(best and best["is_key_takeaways"] and 3 <= best["bullets"] <= 6 and best["is_first"])
     return {
@@ -372,7 +515,9 @@ def chunk_structure(md):
     }
 
 
-def analyze(md, html=None, today=None):
+def analyze(md, html=None, today=None, lang="auto"):
+    lang = detect_language(md, html) if lang == "auto" else lang
+    use_language(lang)
     today = today or dt.date.today()
     blocks = parse_blocks(md)
     paras = [b[2] for b in blocks if b[0] == "p"]
@@ -468,6 +613,10 @@ def analyze(md, html=None, today=None):
     html_tables = len(re.findall(r"<table\b", html, re.I)) if html else None
 
     return {
+        "language": lang,
+        "language_note": None if lang == "en" else (
+            "French rules applied. The benchmarks come from English-language studies: compare directionally. "
+            "READ uses the Kandel-Moles score (higher is easier), not the Flesch-Kincaid grade."),
         "word_count": total_words,
         "paragraphs": len(paras),
         "POS-DOC": {
@@ -501,6 +650,7 @@ def analyze(md, html=None, today=None):
         },
         "READ": {
             "flesch_kincaid_grade": fk_grade(all_sents),
+            "kandel_moles_score": kandel_moles(all_sents) if lang == "fr" else None,
             "avg_sentence_words": round(tot / max(1, len(all_sents)), 1),
             "sentences_over_35_words": len(long_sents),
             "long_sentence_examples": long_sents[:5],
@@ -522,7 +672,9 @@ def analyze(md, html=None, today=None):
         "SUBJ": {
             "subjectivity": subjectivity(body),
             "benchmark": "cited ~0.47; avoid <0.2 (dry) and >0.7 (hype)",
-            "note": None if subjectivity("x") is not None else "TextBlob not installed — judge qualitatively",
+            "note": None if subjectivity("x") is not None else (
+                "No French lexicon — judge qualitatively" if lang == "fr"
+                else "TextBlob not installed — judge qualitatively"),
         },
     }
 
@@ -532,7 +684,8 @@ if __name__ == "__main__":
     ap.add_argument("markdown")
     ap.add_argument("--html")
     ap.add_argument("--today", type=dt.date.fromisoformat)
+    ap.add_argument("--lang", choices=["auto", "en", "fr"], default="auto")
     a = ap.parse_args()
     md = open(a.markdown, encoding="utf-8").read()
     html = open(a.html, encoding="utf-8", errors="ignore").read() if a.html else None
-    print(json.dumps(analyze(md, html, a.today), indent=2))
+    print(json.dumps(analyze(md, html, a.today, a.lang), indent=2))

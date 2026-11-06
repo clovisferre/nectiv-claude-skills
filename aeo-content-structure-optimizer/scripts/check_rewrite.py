@@ -8,7 +8,8 @@ Enforces two rules:
    at the same levels. The only change allowed is rephrasing an existing
    heading as a question. Adding, removing, merging or splitting headings fails.
    One exception: a "Key Takeaways" heading may be added (house rule: 3-6
-   bullets, first on the page under the H1).
+   bullets, first on the page under the H1), or its French name ("Points clés",
+   "L'essentiel", "À retenir").
 2. Coverage: every original sentence either survives (closely matched) in the
    revised article or is listed as rewritten/dropped, so you can confirm each
    one is covered by a proposed change and nothing was lost by accident.
@@ -18,6 +19,9 @@ Exit code 1 if the heading rule fails.
 import difflib
 import re
 import sys
+import unicodedata
+
+KT_RE = re.compile(r"key takeaways?|points? clés?|l['’]essentiel|à retenir", re.I)
 
 
 def headings(md):
@@ -30,21 +34,23 @@ def prose_sentences(md):
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"(?m)^\s*([-*+]|\d+[.)])\s+", "", text)
     text = re.sub(r"[*_`>]", "", text)
-    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'“(])", re.sub(r"\s+", " ", text))
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Þ0-9\"'“«(])", re.sub(r"\s+", " ", text))
     return [p.strip() for p in parts if len(p.split()) >= 4]
 
 
 def norm(s):
-    return re.sub(r"[^a-z0-9 ]", "", s.lower().replace("’", "'"))
+    s = unicodedata.normalize("NFKD", s.lower().replace("’", "'"))  # keep accented letters' base
+    return re.sub(r"[^a-z0-9 ]", "", s)
 
 
 def main(orig_path, rev_path):
-    orig, rev = open(orig_path).read(), open(rev_path).read()
+    orig = open(orig_path, encoding="utf-8").read()
+    rev = open(rev_path, encoding="utf-8").read()
     ok = True
 
     ho, hr = headings(orig), headings(rev)
-    orig_has_kt = any(re.search(r"key takeaways?", t, re.I) for _, t in ho)
-    added_kt = [] if orig_has_kt else [h for h in hr if re.search(r"key takeaways?", h[1], re.I)]
+    orig_has_kt = any(KT_RE.search(t) for _, t in ho)
+    added_kt = [] if orig_has_kt else [h for h in hr if KT_RE.search(h[1])]
     hr = [h for h in hr if h not in added_kt]
     print("HEADINGS")
     for h in added_kt:

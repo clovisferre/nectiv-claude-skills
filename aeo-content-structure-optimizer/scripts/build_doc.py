@@ -9,6 +9,7 @@ text colors into native Docs formatting.
 
 audit.json:
 {
+  "lang": "en | fr",   # optional, default "en": language of the doc's fixed labels
   "title": "...", "url": "...", "target_query": "...", "date": "YYYY-MM-DD",
   "overall": "Strong | Needs work | Weak",
   "summary": "Conclusion-first paragraph: what to change and why.",
@@ -44,7 +45,42 @@ import sys
 NAVY = "#1a2b4c"
 GRAY = "#5f6368"
 BORDER = "#d0d7de"
-STATUS_COLOR = {"strong": "#188038", "needs work": "#b06000", "weak": "#c5221f"}
+STATUS_COLOR = {"strong": "#188038", "needs work": "#b06000", "weak": "#c5221f",
+                "fort": "#188038", "à travailler": "#b06000", "faible": "#c5221f"}
+# French labels are a local addition to the Nectiv original.
+LABELS = {
+    "en": {
+        "html_lang": "", "statuses": {},
+        "page": "Page:", "query": "Target query:", "date": "Audit date:", "overall": "Overall:",
+        "summary": "Summary of changes: before and after",
+        "metric_cols": ["Metric", "Current page", "With changes", "Driven by"],
+        "changes": "Proposed changes", "change": "Change {n}:", "where": "Where:", "rewrite": "Rewrite {k}:",
+        "kept": "Left as is, for accuracy:", "current": "Current text", "suggested": "Suggested change",
+        "why": "Why:", "other": "Technical fixes", "sources": "Sources for added data",
+        "source_cols": ["Figure used", "Source", "Published"], "scorecard": "Scorecard",
+        "score_cols": ["Factor", "This page", "Benchmark (cited content)", "Status"],
+        "final": "Revised article (final version)",
+        "final_note": "The complete article with every proposed change applied. "
+                      "Bracketed items are facts to supply or verify before publishing.",
+    },
+    "fr": {
+        "html_lang": " lang='fr'",
+        "statuses": {"strong": "Fort", "needs work": "À travailler", "weak": "Faible"},
+        "page": "Page :", "query": "Requête cible :", "date": "Date de l'audit :", "overall": "Appréciation générale :",
+        "summary": "Résumé des modifications : avant et après",
+        "metric_cols": ["Indicateur", "Page actuelle", "Après modifications", "Modifications concernées"],
+        "changes": "Modifications proposées", "change": "Modification {n} :", "where": "Emplacement :",
+        "rewrite": "Réécriture {k} :", "kept": "Conservé tel quel, par souci d'exactitude :",
+        "current": "Texte actuel", "suggested": "Modification proposée",
+        "why": "Pourquoi :", "other": "Corrections techniques", "sources": "Sources des données ajoutées",
+        "source_cols": ["Chiffre utilisé", "Source", "Publication"], "scorecard": "Tableau d'évaluation",
+        "score_cols": ["Critère", "Cette page", "Repère (contenus cités)", "État"],
+        "final": "Article révisé (version finale)",
+        "final_note": "L'article complet, avec toutes les modifications proposées. "
+                      "Les éléments entre crochets sont des faits à fournir ou à vérifier avant publication.",
+    },
+}
+L = LABELS["en"]
 
 
 def inline(text):
@@ -57,6 +93,7 @@ def inline(text):
 
 
 def status(s):
+    s = L["statuses"].get(str(s).strip().lower(), s)
     c = STATUS_COLOR.get(str(s).strip().lower())
     return f'<span style="color:{c}"><b>{html.escape(str(s))}</b></span>' if c else inline(str(s))
 
@@ -149,29 +186,34 @@ def suggested_box(md):
 
 
 def why(text):
-    return f'<p><span class="g"><b>Why:</b> {inline(text)}</span></p>'
+    return f'<p><span class="g"><b>{L["why"]}</b> {inline(text)}</span></p>'
 
 
 def build(a):
-    h = [f"<html><head><meta charset='utf-8'><title>{html.escape(a['title'])}</title>"
+    global L
+    lang = a.get("lang", "en")
+    if lang not in LABELS:
+        sys.exit(f"Unknown lang {lang!r}: use one of {sorted(LABELS)}")
+    L = LABELS[lang]
+    h = [f"<html{L['html_lang']}><head><meta charset='utf-8'><title>{html.escape(a['title'])}</title>"
          f"<style>{CSS}</style></head><body>",
          f'<h1>{inline(a["title"])}</h1>']
     meta = []
     if a.get("url"):
-        meta.append(f'<b>Page:</b> <a href="{html.escape(a["url"])}">{html.escape(a["url"])}</a>')
+        meta.append(f'<b>{html.escape(L["page"])}</b> <a href="{html.escape(a["url"])}">{html.escape(a["url"])}</a>')
     if a.get("target_query"):
-        meta.append(f"<b>Target query:</b> {inline(a['target_query'])}")
+        meta.append(f"<b>{html.escape(L['query'])}</b> {inline(a['target_query'])}")
     if a.get("date"):
-        meta.append(f"<b>Audit date:</b> {inline(a['date'])}")
+        meta.append(f"<b>{html.escape(L['date'])}</b> {inline(a['date'])}")
     if a.get("overall"):
-        meta.append(f"<b>Overall:</b> {status(a['overall'])}")
+        meta.append(f"<b>{html.escape(L['overall'])}</b> {status(a['overall'])}")
     if meta:
         h.append('<p><span class="meta">' + "<br>".join(meta) + "</span></p>")
     if a.get("summary"):
         h.append(callout(f"<p>{inline(a['summary'])}</p>", "sum"))
 
     if a.get("metrics"):
-        h.append("<h2>Summary of changes: before and after</h2>")
+        h.append(f"<h2>{html.escape(L['summary'])}</h2>")
         rows = []
         for m in a["metrics"]:
             after = f"<b>{inline(str(m.get('after', '')))}</b>"
@@ -179,50 +221,49 @@ def build(a):
                 after += f'<br><span class="g sm">{inline(m["note"])}</span>'
             rows.append([inline(str(m.get("metric", ""))), inline(str(m.get("before", ""))), after,
                          inline(str(m.get("changes", "")))])
-        h.append(table(["Metric", "Current page", "With changes", "Driven by"], rows, raw_cols=(0, 1, 2, 3)))
+        h.append(table(L["metric_cols"], rows, raw_cols=(0, 1, 2, 3)))
 
-    h.append("<h2>Proposed changes</h2>")
+    h.append(f"<h2>{html.escape(L['changes'])}</h2>")
     for n, c in enumerate(a["changes"], 1):
-        h.append(f"<h3>Change {n}: {inline(c.get('title') or c.get('section', ''))}</h3>")
+        h.append(f"<h3>{html.escape(L['change'].format(n=n))} {inline(c.get('title') or c.get('section', ''))}</h3>")
         if c.get("section"):
-            h.append(f'<p><span class="meta"><b>Where:</b> {inline(c["section"])}</span></p>')
+            h.append(f'<p><span class="meta"><b>{html.escape(L["where"])}</b> {inline(c["section"])}</span></p>')
         if c.get("pairs"):
             for k, p in enumerate(c["pairs"], 1):
                 note = f" {inline(p['note'])}" if p.get("note") else ""
-                h.append(f'<p class="rw"><b>Rewrite {k}:</b>{note}</p>')
+                h.append(f'<p class="rw"><b>{html.escape(L["rewrite"].format(k=k))}</b>{note}</p>')
                 h.append(current_box(p["before"]))
                 h.append(suggested_box(p["after"]))
             if c.get("kept"):
-                h.append('<p><span class="g"><b>Left as is, for accuracy:</b></span></p>')
+                h.append(f'<p><span class="g"><b>{html.escape(L["kept"])}</b></span></p>')
                 h.append("<ul>" + "".join(f'<li><span class="g">{inline(x)}</span></li>'
                                           for x in c["kept"]) + "</ul>")
         else:
-            h.append(label("Current text", "lab-cur"))
+            h.append(label(L["current"], "lab-cur"))
             h.append(current_box(c.get("before", "")))
-            h.append(label("Suggested change", "lab-sug"))
+            h.append(label(L["suggested"], "lab-sug"))
             h.append(suggested_box(c.get("after", "")))
         if c.get("why"):
             h.append(why(c["why"]))
 
     if a.get("other"):
-        h.append("<h2>Technical fixes</h2><ul>" + "".join(f"<li>{inline(x)}</li>" for x in a["other"]) + "</ul>")
+        h.append(f"<h2>{html.escape(L['other'])}</h2><ul>" + "".join(f"<li>{inline(x)}</li>" for x in a["other"]) + "</ul>")
     if a.get("sources"):
-        h.append("<h2>Sources for added data</h2>")
-        h.append(table(["Figure used", "Source", "Published"],
+        h.append(f"<h2>{html.escape(L['sources'])}</h2>")
+        h.append(table(L["source_cols"],
                        [[inline(s.get("figure", "")),
                          f'<a href="{html.escape(s.get("url", ""))}">{inline(s.get("title", ""))}</a>'
                          + (f'<br><span class="g sm">{inline(s.get("publisher", ""))}</span>' if s.get("publisher") else ""),
                          inline(s.get("date", ""))] for s in a["sources"]], raw_cols=(0, 1, 2)))
     if a.get("scorecard"):
-        h.append("<h2>Scorecard</h2>")
-        h.append(table(["Factor", "This page", "Benchmark (cited content)", "Status"],
+        h.append(f"<h2>{html.escape(L['scorecard'])}</h2>")
+        h.append(table(L["score_cols"],
                        [[inline(s.get("factor", "")), inline(s.get("page", "")), inline(s.get("benchmark", "")),
                          status(s.get("status", ""))] for s in a["scorecard"]], raw_cols=(0, 1, 2, 3)))
     if a.get("final_article_md"):
         h.append("<hr>")  # Docs' HTML import ignores CSS page breaks (tested); a rule marks the switch
-        h.append('<h2>Revised article (final version)</h2>')
-        h.append(f'<p><span class="g">The complete article with every proposed change applied. '
-                 "Bracketed items are facts to supply or verify before publishing.</span></p>")
+        h.append(f"<h2>{html.escape(L['final'])}</h2>")
+        h.append(f'<p><span class="g">{html.escape(L["final_note"])}</span></p>')
         h.append(md_to_html(open(a["final_article_md"], encoding="utf-8").read(), demote=2))
     h.append("</body></html>")
     return "\n".join(h)
@@ -231,4 +272,5 @@ def build(a):
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(__doc__)
+    sys.stdout.reconfigure(encoding="utf-8")  # the HTML declares utf-8, whatever the console uses
     print(build(json.load(open(sys.argv[1], encoding="utf-8"))))

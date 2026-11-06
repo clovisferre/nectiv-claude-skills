@@ -40,6 +40,12 @@ deliverable rather than generic AEO advice, so always cite the factor ID
   H1/title, infer it and state your assumption.
 
 ### 2. Measure
+French pages are detected automatically (`--lang auto|en|fr`; a local addition
+to the Nectiv original). The script then uses French word lists, reports
+`READ.kandel_moles_score` instead of the Flesch-Kincaid grade, and leaves
+subjectivity to your reading. The benchmarks still come from English-language
+studies, so use them directionally on French pages.
+
 Run `python3 <skill-dir>/scripts/analyze.py page.md --html page.html`
 (leave out `--html` for drafts and pasted text). It returns JSON keyed by
 factor ID: positional bands, first definitive sentence position, intro
@@ -300,8 +306,9 @@ Styling (navy table headers, shaded current/suggested boxes, colored
 statuses, spacing) comes from `build_doc.py`. Don't hand-write HTML.
 
 1. Write `audit.json` in the scratchpad (schema in the docstring of
-   `scripts/build_doc.py`). In `changes[].after`, write the replacement text
-   ready to paste. Separate paragraphs with blank lines, use `[…]` to skip
+   `scripts/build_doc.py`). For a French page, set `"lang": "fr"` so the Doc's
+   fixed labels and statuses are in French, and write its content in French.
+   In `changes[].after`, write the replacement text ready to paste. Separate paragraphs with blank lines, use `[…]` to skip
    unchanged sentences, write new headings as `Heading: <text>`, and start
    list items with `• ` or `1. ` (they become real Doc lists). Quote
    `before` text from the page exactly. Give each `metrics` row a
